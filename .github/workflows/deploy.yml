@@ -1,0 +1,99 @@
+name: Deploy to AWS
+
+# Run manually: Actions tab -> "Deploy to AWS" -> Run workflow -> choose deploy or destroy.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "deploy or destroy"
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, destroy]
+      alarm_email:
+        description: "Optional email for fraud alerts and alarms"
+        required: false
+        default: ""
+
+concurrency: deploy-aws
+
+env:
+  AWS_REGION: eu-west-2
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Set up Terraform state in S3
+        run: bash scripts/state_bucket.sh "$AWS_REGION"
+
+      - name: Destroy everything
+        if: inputs.action == 'destroy'
+        run: terraform -chdir=infra destroy -input=false -auto-approve -var "region=$AWS_REGION"
+
+      - uses: actions/setup-python@v5
+        if: inputs.action == 'deploy'
+        with:
+          python-version: "3.12"
+
+      - name: Download data and train the model
+        if: inputs.action == 'deploy'
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          pip install -r requirements.txt kaggle
+          kaggle datasets download -d mlg-ulb/creditcardfraud --unzip -p data
+          python -m fraudservice.train --data data/creditcard.csv --out models
+          pytest -q
+
+      - name: Create the container registry
+        if: inputs.action == 'deploy'
+        run: terraform -chdir=infra apply -input=false -auto-approve -var "region=$AWS_REGION" -target=aws_ecr_repository.service
+
+      - uses: docker/setup-qemu-action@v3
+        if: inputs.action == 'deploy'
+      - uses: docker/setup-buildx-action@v3
+        if: inputs.action == 'deploy'
+
+      - name: Build and push the arm64 image
+        if: inputs.action == 'deploy'
+        run: |
+          REPO="$(terraform -chdir=infra output -raw ecr_repository_url)"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${REPO%%/*}"
+          docker buildx build --platform linux/arm64 --provenance=false -f Dockerfile.lambda -t "$REPO:${GITHUB_SHA::7}" --push .
+
+      - name: Deploy Lambda, API Gateway, SQS, SNS and alarms
+        if: inputs.action == 'deploy'
+        env:
+          ALARM_EMAIL: ${{ inputs.alarm_email }}
+        run: |
+          terraform -chdir=infra apply -input=false -auto-approve \
+            -var "region=$AWS_REGION" -var "image_tag=${GITHUB_SHA::7}" -var "alarm_email=$ALARM_EMAIL"
+
+      - name: Smoke test the live API
+        if: inputs.action == 'deploy'
+        run: |
+          URL="$(terraform -chdir=infra output -raw api_url)"
+          for i in 1 2 3 4 5; do curl -sf "$URL/health" && break || sleep 10; done
+          BODY='{"transactions":[{"Time":0,"Amount":149.62,"V1":-1.36,"V2":-0.07,"V3":2.54,"V4":1.38,"V5":-0.34,"V6":0.46,"V7":0.24,"V8":0.1,"V9":0.36,"V10":0.09,"V11":-0.55,"V12":-0.62,"V13":-0.99,"V14":-0.31,"V15":1.47,"V16":-0.47,"V17":0.21,"V18":0.03,"V19":0.4,"V20":0.25,"V21":-0.02,"V22":0.28,"V23":-0.11,"V24":0.07,"V25":0.13,"V26":-0.19,"V27":0.13,"V28":-0.02}]}'
+          RESULT="$(curl -sf -X POST "$URL/score" -H 'Content-Type: application/json' -d "$BODY")"
+          echo "$RESULT"
+          {
+            echo "## Deployed"
+            echo "- API: $URL"
+            echo "- Sample score: \`$RESULT\`"
+            echo "- Queue: $(terraform -chdir=infra output -raw transactions_queue_url)"
+          } >> "$GITHUB_STEP_SUMMARY"
