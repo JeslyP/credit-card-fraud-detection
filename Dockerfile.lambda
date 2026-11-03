@@ -3,6 +3,7 @@ FROM public.ecr.aws/lambda/python:3.12
 COPY requirements-lambda.txt .
 RUN pip install --no-cache-dir -r requirements-lambda.txt
 COPY fraudservice ${LAMBDA_TASK_ROOT}/fraudservice
+COPY fraudagent ${LAMBDA_TASK_ROOT}/fraudagent
 COPY models ${LAMBDA_TASK_ROOT}/models
 ENV MODEL_DIR=${LAMBDA_TASK_ROOT}/models
 CMD ["fraudservice.lambda_handler.handler"]

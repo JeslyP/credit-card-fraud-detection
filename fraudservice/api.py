@@ -71,7 +71,55 @@ def create_app(model_dir: str | Path | None = None, log_path: str | Path | None 
         return {"model_version": meta["model_version"], "threshold": meta["threshold"],
                 "scores": [{"fraud_probability": float(p), "alert": bool(a)} for p, a in zip(probs, alerts)]}
 
+    _add_agent_routes(app, model_dir)
     return app
+
+
+def _anthropic_client():
+    """Claude client. The key comes from ANTHROPIC_API_KEY, or from an encrypted SSM parameter on AWS."""
+    import anthropic
+
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    param = os.environ.get("ANTHROPIC_KEY_PARAM")
+    if not key and param:
+        import boto3
+
+        key = boto3.client("ssm").get_parameter(Name=param, WithDecryption=True)["Parameter"]["Value"]
+    if not key:
+        return None
+    return anthropic.Anthropic(api_key=key, max_retries=2, timeout=20)
+
+
+def _add_agent_routes(app: FastAPI, model_dir):
+    """LLM fraud analyst endpoints. Only built-in demo cases can be reviewed, which caps cost and abuse."""
+    if not (Path(model_dir) / "demo_cases.json").exists():
+        return
+    from fraudagent.agent import review_case
+    from fraudagent.tools import FraudTools
+
+    tools = FraudTools(model_dir)
+    state = {"client": None, "cache": {}}
+
+    @app.get("/cases")
+    def cases():
+        """Demo cases from the unseen test period (labels hidden)."""
+        return [{"case_id": c["case_id"], **tools.get_transaction(c["case_id"])} for c in tools.cases.values()]
+
+    @app.post("/review/{case_id}")
+    def review(case_id: str):
+        """Run the Claude fraud analyst agent on a demo case and return its draft for a human analyst."""
+        if case_id not in tools.cases:
+            raise HTTPException(status_code=404, detail="Unknown case_id; see GET /cases")
+        if case_id in state["cache"]:
+            return state["cache"][case_id]
+        if state["client"] is None:
+            state["client"] = _anthropic_client()
+        if state["client"] is None:
+            raise HTTPException(status_code=503, detail="Agent not configured: no Anthropic API key")
+        result = review_case(case_id, tools, state["client"]).to_dict()
+        if result["status"] == "completed":
+            state["cache"][case_id] = result
+        return result
 
 
 def _log(path, df, probs, alerts):

@@ -39,3 +39,9 @@ variable "alarm_email" {
   type        = string
   default     = ""
 }
+
+variable "agent_model" {
+  description = "Claude model used by the fraud analyst agent"
+  type        = string
+  default     = "claude-haiku-5-5"
+}

@@ -41,7 +41,22 @@ jobs:
 
       - name: Destroy everything
         if: inputs.action == 'destroy'
-        run: terraform -chdir=infra destroy -input=false -auto-approve -var "region=$AWS_REGION"
+        run: |
+          terraform -chdir=infra destroy -input=false -auto-approve -var "region=$AWS_REGION"
+          aws ssm delete-parameter --name /fraud-scoring/anthropic-api-key 2>/dev/null || true
+
+      - name: Store the Anthropic API key in SSM (encrypted)
+        if: inputs.action == 'deploy'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            aws ssm put-parameter --name /fraud-scoring/anthropic-api-key --type SecureString \
+              --value "$ANTHROPIC_API_KEY" --overwrite >/dev/null
+            echo "Stored the agent key in SSM"
+          else
+            echo "No ANTHROPIC_API_KEY secret: the API deploys, but /review will return 503"
+          fi
 
       - uses: actions/setup-python@v5
         if: inputs.action == 'deploy'
@@ -91,9 +106,14 @@ jobs:
           BODY='{"transactions":[{"Time":0,"Amount":149.62,"V1":-1.36,"V2":-0.07,"V3":2.54,"V4":1.38,"V5":-0.34,"V6":0.46,"V7":0.24,"V8":0.1,"V9":0.36,"V10":0.09,"V11":-0.55,"V12":-0.62,"V13":-0.99,"V14":-0.31,"V15":1.47,"V16":-0.47,"V17":0.21,"V18":0.03,"V19":0.4,"V20":0.25,"V21":-0.02,"V22":0.28,"V23":-0.11,"V24":0.07,"V25":0.13,"V26":-0.19,"V27":0.13,"V28":-0.02}]}'
           RESULT="$(curl -sf -X POST "$URL/score" -H 'Content-Type: application/json' -d "$BODY")"
           echo "$RESULT"
+          curl -sf "$URL/cases" | head -c 300; echo
+          REVIEW="$(curl -s --max-time 35 -X POST "$URL/review/DEMO-001" | head -c 1200)"
+          echo "$REVIEW"
           {
             echo "## Deployed"
             echo "- API: $URL"
             echo "- Sample score: \`$RESULT\`"
+            echo "- Agent cases: $URL/cases"
+            echo "- Agent review of DEMO-001: \`$REVIEW\`"
             echo "- Queue: $(terraform -chdir=infra output -raw transactions_queue_url)"
           } >> "$GITHUB_STEP_SUMMARY"

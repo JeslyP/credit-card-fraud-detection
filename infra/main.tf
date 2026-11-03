@@ -21,7 +21,7 @@ resource "aws_ecr_lifecycle_policy" "keep_recent" {
   })
 }
 
-# ---------- Lambda function (least-privilege role: logs only) ----------
+# ---------- Lambda function (least-privilege role: logs, plus reading one SSM parameter in agent.tf) ----------
 data "aws_iam_policy_document" "assume_lambda" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -57,7 +57,11 @@ resource "aws_lambda_function" "service" {
   timeout       = 30
 
   environment {
-    variables = { MODEL_DIR = "/var/task/models" }
+    variables = {
+      MODEL_DIR           = "/var/task/models"
+      ANTHROPIC_KEY_PARAM = local.anthropic_key_param
+      AGENT_MODEL         = var.agent_model
+    }
   }
 
   depends_on = [aws_iam_role_policy_attachment.logs, aws_cloudwatch_log_group.lambda]

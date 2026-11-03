@@ -5,3 +5,5 @@ joblib>=1.3
 fastapi>=0.110
 pydantic>=2.5
 mangum>=0.17
+anthropic>=0.40
+boto3>=1.34

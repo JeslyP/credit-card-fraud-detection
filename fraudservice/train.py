@@ -90,6 +90,9 @@ def train(df: pd.DataFrame, out_dir: str | Path) -> dict:
     }
     joblib.dump(model, out_dir / "model.joblib")
     (out_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
+
+    from fraudagent.tools import build_agent_assets  # reference data and demo cases for the LLM agent
+    build_agent_assets(train_df, test_df, model, threshold, out_dir)
     return metadata
 
 
