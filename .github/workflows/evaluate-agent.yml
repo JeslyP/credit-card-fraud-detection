@@ -1,0 +1,48 @@
+name: Evaluate fraud analyst agent
+
+# Run manually: Actions tab -> "Evaluate fraud analyst agent" -> Run workflow.
+# Trains the model on the real dataset, runs the Claude agent on labelled cases from the unseen test period
+# (plus prompt-injection attacks), and publishes the results in the run summary and as a downloadable artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      per_group:
+        description: "Cases per group (caught fraud, missed fraud, false alarm, clean genuine)"
+        default: "10"
+      injections:
+        description: "Prompt-injection attack cases"
+        default: "6"
+      model:
+        description: "Claude model"
+        default: "claude-haiku-5-5"
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download data and train the model
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          pip install -r requirements.txt kaggle
+          kaggle datasets download -d mlg-ulb/creditcardfraud --unzip -p data
+          python -m fraudservice.train --data data/creditcard.csv --out models
+      - name: Run the agent evaluation
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python -m fraudagent.evaluate --data data/creditcard.csv --model-dir models \
+            --per-group "${{ inputs.per_group }}" --injections "${{ inputs.injections }}" \
+            --model "${{ inputs.model }}" --out agent_eval
+          cat agent_eval/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-evaluation
+          path: agent_eval/

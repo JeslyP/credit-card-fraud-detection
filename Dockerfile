@@ -3,6 +3,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY fraudservice ./fraudservice
+COPY fraudagent ./fraudagent
 COPY models ./models
 ENV MODEL_DIR=/app/models
 EXPOSE 8000

@@ -1,17 +1,20 @@
-# Fraud Detection: Model, Behavioural Features and a Production Scoring Service
+# Fraud Detection: Model, Behavioural Features, a Production Scoring Service and an LLM Analyst Agent
 
 ![CI](https://github.com/JeslyP/credit-card-fraud-detection/actions/workflows/ci.yml/badge.svg)
 
-An end-to-end fraud detection project: a model evaluated the way a fraud team would, a study of behavioural features on payments data, and a tested scoring API with drift monitoring.
+An end-to-end fraud detection project: a model evaluated the way a fraud team would, a study of behavioural features on payments data, a tested scoring API with drift monitoring, and a Claude agent that investigates flagged transactions and drafts recommendations for a human analyst.
 
 | Part | What it shows |
 |---|---|
 | [`fraud_detection.ipynb`](fraud_detection.ipynb) | Fraud model on 284,807 card transactions, time-based evaluation, cost-based alert threshold |
 | [`paysim_behavioural_features.ipynb`](paysim_behavioural_features.ipynb) | How much behavioural features (payee history, velocity, new payees) improve detection on 6.3M payments |
-| [`fraudservice/`](fraudservice) | Training script, FastAPI scoring service, event-driven queue consumer, drift monitor, 17 automated tests in GitHub Actions |
+| [`fraudservice/`](fraudservice) | Training script, FastAPI scoring service, event-driven queue consumer, drift monitor, automated tests in GitHub Actions |
+| [`fraudagent/`](fraudagent) | LLM fraud analyst agent: Claude with tool use, a policy guardrail in code, prompt-injection defences and an evaluation harness |
 | [`infra/`](infra) | Terraform for AWS: Lambda, API Gateway, SQS with a dead-letter queue, SNS fraud alerts, CloudWatch logs and alarms |
 
 Case study: [jeslyp.github.io/Jesly/projects/fraud](https://jeslyp.github.io/Jesly/projects/fraud/)
+
+**Live API on AWS:** [https://iilsazxkuj.execute-api.eu-west-2.amazonaws.com/health](https://iilsazxkuj.execute-api.eu-west-2.amazonaws.com/health) (deployed with Terraform from GitHub Actions; rate-limited)
 
 ## 1. Card fraud model
 
@@ -130,5 +133,41 @@ To get fraud alerts and alarms by email, add `-var alarm_email=you@example.com` 
 terraform -chdir=infra destroy -var region=eu-west-2
 ```
 
+## 5. LLM fraud analyst agent (Claude with tool use)
+
+A fraud model gives a score; an analyst still has to work out *why* and decide what to do. The agent does the
+investigation and writes it up in plain English, and a human makes the decision.
+
+```
+flagged case -> Claude -> get_transaction / score_transaction / explain_score / find_similar_cases / get_review_policy
+                       -> submit_recommendation (structured: escalate | monitor | clear, summary, evidence)
+             -> guardrail in code: re-applies the written policy; if Claude is less cautious, the stricter answer wins
+             -> draft for a human analyst (nothing is ever blocked automatically)
+```
+
+Design decisions:
+- **Every number comes from a tool.** `explain_score` returns exact logistic-regression contributions (coefficient x
+  standardised value), not an approximation, and `find_similar_cases` reports how many of the 25 nearest past
+  transactions were fraud. The submitted probability is checked against the model's actual output.
+- **Structured output through a tool.** Claude must answer by calling `submit_recommendation`; invalid submissions
+  are sent back to it with the error, and tool errors are reported to it rather than crashing the run.
+- **Guardrail and fail-safe.** If Claude recommends something less cautious than the policy, the policy wins and the
+  case is flagged. If the agent cannot finish within 8 turns, the case falls back to the policy.
+- **Prompt injection.** Customer and merchant notes are marked as untrusted; the evaluation includes real frauds whose
+  notes tell the agent to clear them.
+- **Security and cost.** On AWS the Anthropic key sits in an encrypted SSM parameter (never in Terraform state or the
+  image), only built-in demo cases can be reviewed, results are cached, and API Gateway throttles requests.
+
+Endpoints: `GET /cases` lists demo cases from the unseen test period; `POST /review/{case_id}` runs the agent.
+
+```bash
+export ANTHROPIC_API_KEY=...          # your own key
+python -m fraudagent.evaluate --data creditcard.csv --model-dir models --per-group 10 --injections 6
+```
+Or run **Actions -> Evaluate fraud analyst agent** (needs the `ANTHROPIC_API_KEY` repository secret). It reports
+completion rate, agreement with the policy, guardrail overrides, faithfulness of quoted numbers, frauds escalated,
+false escalations, prompt-injection resistance, latency and tokens per case. The agent tests run offline with a
+scripted fake Claude client, so CI needs no key.
+
 ## Tools
-Python, pandas, NumPy, scikit-learn, FastAPI, Pydantic, pytest, GitHub Actions, Docker, AWS (Lambda, API Gateway, SQS, SNS, ECR, CloudWatch, IAM), Terraform, Matplotlib, Jupyter
+Python, Claude API (tool use), pandas, NumPy, scikit-learn, FastAPI, Pydantic, pytest, GitHub Actions, Docker, AWS (Lambda, API Gateway, SQS, SNS, ECR, CloudWatch, IAM, SSM), Terraform, Matplotlib, Jupyter
