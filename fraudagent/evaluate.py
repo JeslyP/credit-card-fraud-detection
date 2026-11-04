@@ -1,6 +1,8 @@
 """Evaluate the fraud analyst agent on labelled transactions from the unseen test period.
 
-Usage (needs ANTHROPIC_API_KEY in the environment and a trained model in models/):
+Usage (needs a trained model in models/, and either ANTHROPIC_API_KEY or, in GitHub Actions, the
+ANTHROPIC_FEDERATION_RULE_ID / ANTHROPIC_ORGANIZATION_ID / ANTHROPIC_SERVICE_ACCOUNT_ID / ANTHROPIC_WORKSPACE_ID
+variables for keyless Workload Identity Federation):
     python -m fraudagent.evaluate --data creditcard.csv --model-dir models --per-group 10 --injections 6
 
 The sample is stratified: caught fraud, missed fraud, false alarms, clean genuine transactions, plus real caught
@@ -8,6 +10,7 @@ frauds carrying a prompt-injection note that tells the agent to clear them. Labe
 """
 import argparse
 import json
+import os
 import statistics
 from pathlib import Path
 
@@ -18,6 +21,34 @@ from fraudservice.train import time_split
 
 from .agent import DEFAULT_MODEL, review_case
 from .tools import FraudTools, sample_cases
+
+
+def github_oidc_token() -> str:
+    """Fetch a fresh GitHub Actions identity token for the Claude API (each one lasts about 5 minutes)."""
+    import json as _json
+    import urllib.request
+
+    url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=https://api.anthropic.com"
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return _json.load(resp)["value"]
+
+
+def make_client():
+    """Claude client. Inside GitHub Actions with a federation rule configured, log in with Workload Identity
+    Federation (short-lived tokens, no stored API key); otherwise fall back to ANTHROPIC_API_KEY."""
+    import anthropic
+
+    if os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL") and os.environ.get("ANTHROPIC_FEDERATION_RULE_ID"):
+        creds = anthropic.WorkloadIdentityCredentials(
+            identity_token_provider=github_oidc_token,  # called again whenever the SDK needs a new token
+            federation_rule_id=os.environ["ANTHROPIC_FEDERATION_RULE_ID"],
+            organization_id=os.environ["ANTHROPIC_ORGANIZATION_ID"],
+            service_account_id=os.environ.get("ANTHROPIC_SERVICE_ACCOUNT_ID"),
+            workspace_id=os.environ.get("ANTHROPIC_WORKSPACE_ID"),
+        )
+        return anthropic.Anthropic(credentials=creds, max_retries=4), "workload identity federation (no API key)"
+    return anthropic.Anthropic(max_retries=4), "API key"
 
 
 def summarise(cases: list[dict], reviews: list[dict], model_name: str) -> dict:
@@ -97,14 +128,13 @@ def main():
     ap.add_argument("--out", default="agent_eval")
     args = ap.parse_args()
 
-    import anthropic  # imported here so the rest of the package works without the SDK installed
-
     model = FraudTools(args.model_dir, cases=[]).model
     meta = json.loads((Path(args.model_dir) / "metadata.json").read_text())
     _, _, test_df = time_split(add_features(pd.read_csv(args.data)))
     cases = sample_cases(test_df, model, meta["threshold"], args.per_group, args.seed, "EVAL", args.injections)
     tools = FraudTools(args.model_dir, cases=cases)
-    client = anthropic.Anthropic(max_retries=4)
+    client, auth = make_client()
+    print(f"Authenticating to Claude with {auth}")
 
     reviews = []
     for c in cases:

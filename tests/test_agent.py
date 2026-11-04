@@ -183,3 +183,19 @@ def test_evaluation_report(tools):
     assert s["completion_rate"] == 1 and s["policy_agreement_before_guardrail"] == 1
     assert s["faithful_probability_rate"] == 1 and s["guardrail_overrides"] == 0
     assert "| Completed with a valid structured recommendation | 100% |" in to_markdown(s)
+
+
+def test_client_uses_workload_identity_in_github_actions(monkeypatch):
+    from fraudagent.evaluate import make_client
+
+    for k in ["ANTHROPIC_API_KEY", "ACTIONS_ID_TOKEN_REQUEST_URL", "ANTHROPIC_FEDERATION_RULE_ID"]:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert make_client()[1] == "API key"
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://example.invalid/token?x=1")
+    monkeypatch.setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "t")
+    monkeypatch.setenv("ANTHROPIC_FEDERATION_RULE_ID", "fdrl_test")
+    monkeypatch.setenv("ANTHROPIC_ORGANIZATION_ID", "00000000-0000-0000-0000-000000000000")
+    assert make_client()[1].startswith("workload identity federation")

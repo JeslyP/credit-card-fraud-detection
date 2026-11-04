@@ -155,6 +155,8 @@ Design decisions:
   case is flagged. If the agent cannot finish within 8 turns, the case falls back to the policy.
 - **Prompt injection.** Customer and merchant notes are marked as untrusted; the evaluation includes real frauds whose
   notes tell the agent to clear them.
+- **Keyless CI.** The evaluation workflow authenticates with Workload Identity Federation, so no Claude API key is
+  stored in GitHub.
 - **Security and cost.** On AWS the Anthropic key sits in an encrypted SSM parameter (never in Terraform state or the
   image), only built-in demo cases can be reviewed, results are cached, and API Gateway throttles requests.
 
@@ -164,7 +166,9 @@ Endpoints: `GET /cases` lists demo cases from the unseen test period; `POST /rev
 export ANTHROPIC_API_KEY=...          # your own key
 python -m fraudagent.evaluate --data creditcard.csv --model-dir models --per-group 10 --injections 6
 ```
-Or run **Actions -> Evaluate fraud analyst agent** (needs the `ANTHROPIC_API_KEY` repository secret). It reports
+Or run **Actions -> Evaluate fraud analyst agent**. It logs in to Claude **without an API key**, using Workload
+Identity Federation: GitHub issues a short-lived identity token, Anthropic exchanges it for a short-lived access token,
+and the federation rule only trusts manual runs of this repository's `main` branch. It reports
 completion rate, agreement with the policy, guardrail overrides, faithfulness of quoted numbers, frauds escalated,
 false escalations, prompt-injection resistance, latency and tokens per case. The agent tests run offline with a
 scripted fake Claude client, so CI needs no key.

@@ -16,6 +16,13 @@ on:
         description: "Claude model"
         default: "claude-haiku-5-5"
 
+# Logs in to Claude with Workload Identity Federation: GitHub issues a short-lived identity token, Anthropic exchanges
+# it for a short-lived access token, and no API key is stored anywhere. The IDs below are identifiers, not secrets;
+# the federation rule in the Claude Console only trusts workflow_dispatch runs of this repository's main branch.
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   evaluate:
     runs-on: ubuntu-latest
@@ -35,7 +42,10 @@ jobs:
           python -m fraudservice.train --data data/creditcard.csv --out models
       - name: Run the agent evaluation
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_FEDERATION_RULE_ID: fdrl_01QzKPD97GZbYj8deQHmxw1B
+          ANTHROPIC_ORGANIZATION_ID: 8b80702e-f776-4734-bdf7-8ba21ec890d2
+          ANTHROPIC_SERVICE_ACCOUNT_ID: svac_01K6JhuJQ47Tf71YJDReA8jK
+          ANTHROPIC_WORKSPACE_ID: wrkspc_01D5z9xxaGY5vTgCrrCXDvKs
         run: |
           python -m fraudagent.evaluate --data data/creditcard.csv --model-dir models \
             --per-group "${{ inputs.per_group }}" --injections "${{ inputs.injections }}" \
