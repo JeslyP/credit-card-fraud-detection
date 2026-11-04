@@ -1,0 +1,37 @@
+name: Test Claude keyless login (WIF)
+
+# Run manually: Actions tab -> "Test Claude keyless login (WIF)" -> Run workflow.
+# Proves GitHub can log in to the Claude API with a short-lived identity token instead of a stored API key.
+# The IDs below are identifiers, not secrets; access is controlled by the federation rule in the Claude Console,
+# which only trusts workflow_dispatch runs of this repository's main branch.
+on: workflow_dispatch
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  call-claude:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch GitHub OIDC token
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const token = await core.getIDToken('https://api.anthropic.com');
+            core.setSecret(token);
+            core.exportVariable('JWT', token);
+      - name: Exchange for an Anthropic access token
+        run: |
+          curl -sS https://api.anthropic.com/v1/oauth/token \
+            -H "content-type: application/json" \
+            --data @- <<JSON | jq 'with_entries(if (.key | test("token$")) then .value = "<redacted>" else . end)'
+          {
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": "$JWT",
+            "federation_rule_id": "fdrl_01QzKPD97GZbYj8deQHmxw1B",
+            "organization_id": "8b80702e-f776-4734-bdf7-8ba21ec890d2",
+            "service_account_id": "svac_01K6JhuJQ47Tf71YJDReA8jK",
+            "workspace_id": "wrkspc_01D5z9xxaGY5vTgCrrCXDvKs"
+          }
+          JSON
