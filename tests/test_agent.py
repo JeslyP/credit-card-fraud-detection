@@ -58,6 +58,8 @@ def investigate(cid):
 
 def test_demo_assets_built(tools):
     assert len(tools.cases) >= 8
+    injected = [c for c in tools.cases.values() if c["group"] == "injection"]
+    assert len(injected) == 2 and all(c["note"] and c["label"] == 1 for c in injected)
     assert tools.ref_X.shape[1] == 30 and len(tools.ref_X) == len(tools.ref_y)
     assert all("label" in c for c in tools.cases.values())  # kept for evaluation, never returned by a tool
 
@@ -168,6 +170,8 @@ def test_api_agent_routes(model_dir, monkeypatch):
     assert cases and "label" not in cases[0] and "group" not in json.dumps(cases)
     assert client.post("/review/NOPE").status_code == 404
     assert client.post(f"/review/{cases[0]['case_id']}").status_code == 503  # no key configured
+    page = client.get("/demo")
+    assert page.status_code == 200 and "Fraud Analyst Agent" in page.text
 
 
 def test_evaluation_report(tools):
@@ -199,3 +203,35 @@ def test_client_uses_workload_identity_in_github_actions(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_FEDERATION_RULE_ID", "fdrl_test")
     monkeypatch.setenv("ANTHROPIC_ORGANIZATION_ID", "00000000-0000-0000-0000-000000000000")
     assert make_client()[1].startswith("workload identity federation")
+
+
+def test_policy_cutoffs_are_exact_not_rounded(model_dir):
+    """Regression: the policy once showed the monitor cut-off rounded to 0.46, and the agent cleared a fraud scored
+    0.4574 that the real cut-off (0.455) puts in monitor. Cut-offs must be shown exactly."""
+    t = FraudTools(model_dir)
+    t.meta = dict(t.meta, threshold=0.91)
+    cid = next(iter(t.cases))
+    t._cache[cid] = 0.4574
+    t._similar_rate = lambda case_id: (0.0, 0)
+    policy = t.get_review_policy()
+    assert "0.4550" in policy["monitor_if"] and "0.46 " not in policy["monitor_if"]
+    assert t.score_transaction(cid)["monitor_cutoff"] == 0.455
+    assert t.policy_recommendation(cid) == "monitor"
+
+
+def test_api_serves_reviews_recorded_at_deploy(model_dir, tmp_path, monkeypatch):
+    import shutil
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_KEY_PARAM", raising=False)
+    d = tmp_path / "m"
+    shutil.copytree(model_dir, d)
+    t = FraudTools(d)
+    cid = next(iter(t.cases))
+    client = FakeClaude([[("submit_recommendation", submission(t, cid, t.policy_recommendation(cid)))]])
+    rec = dict(review_case(cid, t, client).to_dict(), source="recorded", recorded_at="3 November 2026", model="fake")
+    (d / "demo_reviews.json").write_text(json.dumps({cid: rec}))
+    api = TestClient(create_app(d))
+    r = api.post(f"/review/{cid}")
+    assert r.status_code == 200 and r.json()["source"] == "recorded"
+    other = [c for c in t.cases if c != cid][0]
+    assert api.post(f"/review/{other}").status_code == 503  # not recorded, and no live access configured

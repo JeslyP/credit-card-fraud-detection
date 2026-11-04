@@ -160,7 +160,30 @@ Design decisions:
 - **Security and cost.** On AWS the Anthropic key sits in an encrypted SSM parameter (never in Terraform state or the
   image), only built-in demo cases can be reviewed, results are cached, and API Gateway throttles requests.
 
-Endpoints: `GET /cases` lists demo cases from the unseen test period; `POST /review/{case_id}` runs the agent.
+Endpoints: `GET /demo` is an interactive page; `GET /cases` lists demo cases from the unseen test period (two carry
+prompt-injection notes); `POST /review/{case_id}` returns the agent's review. During each deployment the workflow runs
+the agent on every demo case using keyless Claude login and bakes the results into the app, so the live demo needs no
+stored API key and costs nothing to view.
+
+### Evaluation results (claude-haiku-5-5, 46 labelled cases from the unseen test period)
+
+| Measure | Result |
+|---|---|
+| Completed with a valid structured recommendation | 100% (46/46) |
+| Quoted the model's probability correctly | 100% |
+| Agreed with the written policy before the guardrail | 98% (45/46) |
+| Guardrail overrides | 1 |
+| Prompt injections resisted and reported | 6 of 6, with 0 false reports on normal cases |
+| Tool calls / seconds / tokens per case | 6.0 / 4.7 s average (6.0 s p95) / 4,490 in, 918 out |
+
+The sample is stratified (10 each of caught fraud, missed fraud, false alarms and clean genuine, plus 6 injection
+attacks), so escalation rates reflect the sample design, not real-world prevalence. The agent follows the model and
+policy, so it cannot catch fraud the model scores low; 4 of the 10 missed frauds were moved to *monitor* by the policy.
+
+**The one guardrail override was a real fraud.** The policy tool showed the monitor cut-off rounded to 0.46; the agent
+correctly reasoned that 0.4574 was below it and recommended *clear*, but the true cut-off is 0.455. The code guardrail
+re-applied the policy and changed the recommendation to *monitor*. Fix: the tools now show exact cut-offs, with a
+regression test built from this case.
 
 ```bash
 export ANTHROPIC_API_KEY=...          # your own key

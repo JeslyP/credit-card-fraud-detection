@@ -83,7 +83,8 @@ class FraudTools:
     def score_transaction(self, case_id: str) -> dict:
         p = self._probability(case_id)
         thr = self.meta["threshold"]
-        return {"fraud_probability": round(p, 4), "alert_threshold": round(thr, 2), "model_alert": p >= thr,
+        return {"fraud_probability": round(p, 4), "alert_threshold": round(thr, 4),
+                "monitor_cutoff": round(thr * MONITOR_FRACTION, 4), "model_alert": p >= thr,
                 "model_version": self.meta["model_version"],
                 "model_test_recall": round(self.meta["test_metrics"]["recall"], 3),
                 "model_test_precision": round(self.meta["test_metrics"]["precision"], 3)}
@@ -115,10 +116,13 @@ class FraudTools:
     def get_review_policy(self) -> dict:
         thr = self.meta["threshold"]
         return {
-            "escalate_if": f"fraud_probability >= {thr:.2f} (the alert threshold) OR at least "
+            # Exact cut-offs, never rounded: a rounded 0.46 once led the agent to clear a fraud scored 0.4574
+            # when the real monitor cut-off was 0.455 (the code guardrail caught it).
+            "escalate_if": f"fraud_probability >= {thr:.4f} (the alert threshold) OR at least "
                            f"{SIMILAR_ESCALATE:.0%} of similar past transactions were fraud",
-            "monitor_if": f"not escalated, and fraud_probability >= {thr * MONITOR_FRACTION:.2f} OR at least "
+            "monitor_if": f"not escalated, and fraud_probability >= {thr * MONITOR_FRACTION:.4f} OR at least "
                           f"{SIMILAR_MONITOR:.0%} of similar past transactions were fraud",
+            "comparisons": "Compare exact numbers. Do not round the probability or the cut-offs.",
             "clear_if": "none of the above",
             "rules": [
                 "You recommend; a human analyst makes the final decision. Never say a transaction has been blocked.",
@@ -155,7 +159,7 @@ def build_agent_assets(train_df: pd.DataFrame, test_df: pd.DataFrame, model, thr
     np.savez_compressed(out_dir / "agent_reference.npz",
                         X=scaler.transform(train_df[FEATURES]).astype(np.float32),
                         y=train_df["Class"].values.astype(np.int8))
-    cases = sample_cases(test_df, model, threshold, n_per_group=4, seed=seed, prefix="DEMO")
+    cases = sample_cases(test_df, model, threshold, n_per_group=4, seed=seed, prefix="DEMO", n_injection=2)
     (out_dir / "demo_cases.json").write_text(json.dumps(cases, indent=1))
 
 

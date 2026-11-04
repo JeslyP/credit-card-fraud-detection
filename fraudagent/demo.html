@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fraud Analyst Agent</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1d1f23; --muted:#5f6670; --line:#e3e6ea; --accent:#1f3864;
+          --esc:#b42318; --esc-bg:#fdecea; --mon:#9a6700; --mon-bg:#fff4d6; --clr:#1a7f37; --clr-bg:#e6f4ea; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111315; --card:#1a1d21; --ink:#e8eaed; --muted:#a0a7b0; --line:#2c3036; --accent:#8fb1ff;
+            --esc:#ff8a80; --esc-bg:#3a1d1b; --mon:#ffd166; --mon-bg:#3a3018; --clr:#7ee2a0; --clr-bg:#16321f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width:1100px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { margin:0 0 4px; font-size:24px; }
+  .sub { color:var(--muted); margin:0 0 20px; }
+  .flow { display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:13px; color:var(--muted); margin-bottom:20px; }
+  .flow span { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:3px 8px; }
+  .grid { display:grid; grid-template-columns: minmax(0,1fr) minmax(0,1.4fr); gap:16px; }
+  @media (max-width:800px) { .grid { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .case { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); }
+  .case:last-child { border-bottom:0; }
+  .case small { color:var(--muted); display:block; }
+  .note { font-size:12px; color:var(--esc); margin-top:2px; }
+  button { font:inherit; border:1px solid var(--accent); color:var(--accent); background:transparent; border-radius:6px; padding:6px 12px; cursor:pointer; white-space:nowrap; }
+  button:hover, button.active { background:var(--accent); color:var(--card); }
+  button:disabled { opacity:.5; cursor:wait; }
+  .badge { display:inline-block; font-weight:700; text-transform:uppercase; letter-spacing:.04em; border-radius:6px; padding:4px 10px; font-size:14px; }
+  .escalate { color:var(--esc); background:var(--esc-bg); } .monitor { color:var(--mon); background:var(--mon-bg); } .clear { color:var(--clr); background:var(--clr-bg); }
+  .row { display:flex; flex-wrap:wrap; gap:8px 16px; margin:10px 0; font-size:14px; }
+  .row b { font-weight:600; }
+  .muted { color:var(--muted); }
+  .alert { border-left:3px solid var(--esc); background:var(--esc-bg); padding:8px 10px; border-radius:4px; margin:10px 0; font-size:14px; }
+  ol.tools { margin:6px 0 0; padding-left:20px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size:13px; }
+  ul { margin:6px 0 0; padding-left:20px; }
+  h2 { font-size:16px; margin:0 0 8px; }
+  h3 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:16px 0 4px; }
+  .empty { color:var(--muted); padding:40px 0; text-align:center; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Fraud Analyst Agent</h1>
+  <p class="sub">Claude investigates a flagged transaction with tools and drafts a recommendation. A human analyst makes the final decision.</p>
+  <div class="flow">
+    <span>Flagged case</span>&rarr;<span>Claude calls tools: transaction, model score, explanation, similar cases, policy</span>&rarr;<span>Structured recommendation</span>&rarr;<span>Policy guardrail in code</span>&rarr;<span>Human analyst</span>
+  </div>
+  <div class="grid">
+    <section class="card">
+      <h2>Cases from the unseen test period</h2>
+      <div id="cases" class="muted">Loading&hellip;</div>
+    </section>
+    <section class="card" id="result"><div class="empty">Choose a case to see how the agent investigated it.</div></section>
+  </div>
+</main>
+<script>
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+async function loadCases() {
+  const el = document.getElementById("cases");
+  try {
+    const cases = await (await fetch("cases")).json();
+    el.innerHTML = cases.map(c => `
+      <div class="case">
+        <div><b>${esc(c.case_id)}</b> &middot; &euro;${c.amount_eur.toFixed(2)} &middot; ${c.hour_of_day}:00
+          ${c.note.text ? `<div class="note">Note attached: &ldquo;${esc(c.note.text.slice(0, 70))}&hellip;&rdquo;</div>` : ""}</div>
+        <button data-id="${esc(c.case_id)}">See agent review</button>
+      </div>`).join("");
+    el.querySelectorAll("button").forEach(b => b.onclick = () => run(b));
+  } catch (e) { el.textContent = "Could not load cases."; }
+}
+async function run(btn) {
+  const id = btn.dataset.id, out = document.getElementById("result");
+  document.querySelectorAll("#cases button").forEach(b => { b.disabled = true; b.classList.remove("active"); });
+  btn.classList.add("active");
+  out.innerHTML = `<div class="empty">Loading the agent's review of ${esc(id)}&hellip;</div>`;
+  try {
+    const res = await fetch("review/" + encodeURIComponent(id), { method: "POST" });
+    const r = await res.json();
+    if (!res.ok) throw new Error(r.detail || res.status);
+    out.innerHTML = render(r);
+    if (window.innerWidth <= 800) out.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {
+    out.innerHTML = `<div class="empty">The agent could not run: ${esc(e.message)}</div>`;
+  } finally {
+    document.querySelectorAll("#cases button").forEach(b => b.disabled = false);
+  }
+}
+function render(r) {
+  const rec = r.recommendation || "n/a";
+  return `
+    <h2>${esc(r.case_id)}</h2>
+    <span class="badge ${esc(rec)}">${esc(rec)}</span> <span class="muted">draft for a human analyst</span>
+    <div class="row">
+      <span><b>Fraud probability:</b> ${r.fraud_probability_actual == null ? "n/a" : Number(r.fraud_probability_actual).toFixed(4)}</span>
+      <span><b>Agent:</b> ${esc(r.agent_recommendation ?? "did not finish")}</span>
+      <span><b>Written policy:</b> ${esc(r.policy_recommendation)}</span>
+    </div>
+    ${r.guardrail_override ? `<div class="alert">Guardrail stepped in: the agent was less cautious than the written policy, so the policy's recommendation was used and the case is flagged.</div>` : ""}
+    ${r.injection_detected ? `<div class="alert">Prompt injection detected: the note tried to instruct the agent. It was ignored and reported.</div>` : ""}
+    ${r.status !== "completed" ? `<div class="alert">The agent did not finish (${esc(r.error)}), so the case falls back to the written policy.</div>` : ""}
+    <h3>Summary for the analyst</h3><p>${esc(r.summary)}</p>
+    <h3>Key evidence</h3><ul>${(r.key_evidence || []).map(e => `<li>${esc(e)}</li>`).join("")}</ul>
+    <h3>Tools Claude called, in order</h3><ol class="tools">${(r.tool_calls || []).map(t => `<li>${esc(t)}</li>`).join("")}</ol>
+    <p class="muted" style="font-size:13px;margin-top:14px">${r.source === "recorded" ? `Real agent run recorded during deployment on ${esc(r.recorded_at)} with ${esc(r.model)}` : "Live agent run"} &middot; ${r.seconds}s &middot; ${r.input_tokens.toLocaleString()} input / ${r.output_tokens.toLocaleString()} output tokens</p>`;
+}
+loadCases();
+</script>
+</body>
+</html>

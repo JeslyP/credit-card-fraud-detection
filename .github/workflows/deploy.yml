@@ -17,6 +17,11 @@ on:
 
 concurrency: deploy-aws
 
+# id-token lets the job log in to Claude with Workload Identity Federation (no stored API key).
+permissions:
+  id-token: write
+  contents: read
+
 env:
   AWS_REGION: eu-west-2
 
@@ -55,7 +60,7 @@ jobs:
               --value "$ANTHROPIC_API_KEY" --overwrite >/dev/null
             echo "Stored the agent key in SSM"
           else
-            echo "No ANTHROPIC_API_KEY secret: the API deploys, but /review will return 503"
+            echo "No ANTHROPIC_API_KEY secret: /review serves the agent runs recorded during this deploy"
           fi
 
       - uses: actions/setup-python@v5
@@ -73,6 +78,15 @@ jobs:
           kaggle datasets download -d mlg-ulb/creditcardfraud --unzip -p data
           python -m fraudservice.train --data data/creditcard.csv --out models
           pytest -q
+
+      - name: Record agent reviews for the demo page (keyless Claude login)
+        if: inputs.action == 'deploy'
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: fdrl_01QzKPD97GZbYj8deQHmxw1B
+          ANTHROPIC_ORGANIZATION_ID: 8b80702e-f776-4734-bdf7-8ba21ec890d2
+          ANTHROPIC_SERVICE_ACCOUNT_ID: svac_01K6JhuJQ47Tf71YJDReA8jK
+          ANTHROPIC_WORKSPACE_ID: wrkspc_01D5z9xxaGY5vTgCrrCXDvKs
+        run: python -m fraudagent.record_demo --model-dir models
 
       - name: Create the container registry
         if: inputs.action == 'deploy'
@@ -107,13 +121,13 @@ jobs:
           RESULT="$(curl -sf -X POST "$URL/score" -H 'Content-Type: application/json' -d "$BODY")"
           echo "$RESULT"
           curl -sf "$URL/cases" | head -c 300; echo
-          REVIEW="$(curl -s --max-time 35 -X POST "$URL/review/DEMO-001" | head -c 1200)"
+          REVIEW="$(curl -s --max-time 35 -X POST "$URL/review/DEMO-001" | head -c 600)"
           echo "$REVIEW"
           {
             echo "## Deployed"
             echo "- API: $URL"
             echo "- Sample score: \`$RESULT\`"
-            echo "- Agent cases: $URL/cases"
+            echo "- Agent demo page: $URL/demo"
             echo "- Agent review of DEMO-001: \`$REVIEW\`"
             echo "- Queue: $(terraform -chdir=infra output -raw transactions_queue_url)"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -11,3 +11,8 @@ output "ecr_repository_url" {
 output "lambda_function_name" {
   value = aws_lambda_function.service.function_name
 }
+
+output "agent_demo_url" {
+  description = "Interactive page for the LLM fraud analyst agent"
+  value       = "${aws_apigatewayv2_api.http.api_endpoint}/demo"
+}

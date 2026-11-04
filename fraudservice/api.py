@@ -12,6 +12,7 @@ from pathlib import Path
 import joblib
 import pandas as pd
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, create_model
 
 from .features import RAW_COLUMNS, add_features
@@ -99,6 +100,16 @@ def _add_agent_routes(app: FastAPI, model_dir):
 
     tools = FraudTools(model_dir)
     state = {"client": None, "cache": {}}
+    recorded = Path(model_dir) / "demo_reviews.json"
+    if recorded.exists():  # real agent runs recorded during deployment (keyless), so the demo needs no stored key
+        state["cache"].update(json.loads(recorded.read_text()))
+
+    demo_page = (Path(__file__).resolve().parent.parent / "fraudagent" / "demo.html").read_text()
+
+    @app.get("/demo", response_class=HTMLResponse)
+    def demo():
+        """Interactive page: pick a case and watch the agent investigate it."""
+        return demo_page
 
     @app.get("/cases")
     def cases():
@@ -115,8 +126,8 @@ def _add_agent_routes(app: FastAPI, model_dir):
         if state["client"] is None:
             state["client"] = _anthropic_client()
         if state["client"] is None:
-            raise HTTPException(status_code=503, detail="Agent not configured: no Anthropic API key")
-        result = review_case(case_id, tools, state["client"]).to_dict()
+            raise HTTPException(status_code=503, detail="No recorded review for this case and no live Claude access")
+        result = dict(review_case(case_id, tools, state["client"]).to_dict(), source="live")
         if result["status"] == "completed":
             state["cache"][case_id] = result
         return result

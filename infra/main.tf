@@ -86,6 +86,13 @@ resource "aws_apigatewayv2_route" "health" {
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 
+resource "aws_apigatewayv2_route" "agent" {
+  for_each  = toset(["GET /demo", "GET /cases", "POST /review/{case_id}"])
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = each.value
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
 resource "aws_apigatewayv2_route" "score" {
   api_id    = aws_apigatewayv2_api.http.id
   route_key = "POST /score"
