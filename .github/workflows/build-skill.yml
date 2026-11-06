@@ -1,0 +1,35 @@
+name: Build Claude Skill
+
+# Run manually: Actions tab -> "Build Claude Skill" -> Run workflow.
+# Trains the model on the real dataset, packages the fraud review as a Claude Skill, tests it, and uploads
+# fraud-case-review.zip as a downloadable artifact. Upload that zip in Claude under Customize > Skills.
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download data and train the model
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          pip install -r requirements.txt kaggle
+          kaggle datasets download -d mlg-ulb/creditcardfraud --unzip -p data
+          python -m fraudservice.train --data data/creditcard.csv --out models
+      - name: Package and test the skill
+        run: |
+          python -m fraudagent.export_skill --model-dir models --out dist
+          pytest -q tests/test_skill.py
+          python3 dist/fraud-case-review/scripts/review_evidence.py --case DEMO-017 DEMO-018
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fraud-case-review-skill
+          path: dist/fraud-case-review.zip

@@ -196,5 +196,22 @@ completion rate, agreement with the policy, guardrail overrides, faithfulness of
 false escalations, prompt-injection resistance, latency and tokens per case. The agent tests run offline with a
 scripted fake Claude client, so CI needs no key.
 
+## 6. The same review as a Claude Skill
+
+AiCore-style delivery often means giving people a skill in the tools they already use rather than a custom app.
+`fraudagent/export_skill.py` packages the review as a **Claude Skill** that a non-technical analyst can upload under
+**Customize > Skills** in the Claude app and use by asking, for example, "review case DEMO-018" or by attaching a CSV
+of flagged transactions.
+
+- The skill carries the model as plain numbers (scaler, coefficients, threshold), so its script needs only NumPy:
+  no scikit-learn, no network, no API keys.
+- A script gathers the evidence (score, exact reasons, similar past cases, the policy's minimum recommendation);
+  Claude writes the case review from a template and may be stricter than the policy, never less strict.
+- "Similar cases" use every past fraud plus a 25% sample of genuine transactions, each weighted to stand for four.
+- `tests/test_skill.py` checks the skill gives exactly the same scores and reasons as the deployed agent's tools.
+
+Build it from the real data with **Actions -> Build Claude Skill**, then download `fraud-case-review.zip` from the
+run's artifacts.
+
 ## Tools
 Python, Claude API (tool use), pandas, NumPy, scikit-learn, FastAPI, Pydantic, pytest, GitHub Actions, Docker, AWS (Lambda, API Gateway, SQS, SNS, ECR, CloudWatch, IAM, SSM), Terraform, Matplotlib, Jupyter

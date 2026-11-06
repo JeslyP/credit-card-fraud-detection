@@ -11,3 +11,6 @@ infra/.terraform.lock.hcl
 infra/*.tfstate
 infra/*.tfstate.*
 infra/*.tfvars
+
+# Packaged Claude Skill
+dist/
