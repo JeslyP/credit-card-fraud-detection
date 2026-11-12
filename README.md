@@ -12,6 +12,8 @@ An end-to-end fraud detection project: a model evaluated the way a fraud team wo
 | [`fraudagent/`](fraudagent) | LLM fraud analyst agent: Claude with tool use, a policy guardrail in code, prompt-injection defences and an evaluation harness |
 | [`infra/`](infra) | Terraform for AWS: Lambda, API Gateway, SQS with a dead-letter queue, SNS fraud alerts, CloudWatch logs and alarms |
 
+**Live agent demo:** [iilsazxkuj.execute-api.eu-west-2.amazonaws.com/demo](https://iilsazxkuj.execute-api.eu-west-2.amazonaws.com/demo) (the agent's reviews of 18 demo cases)
+
 Case study: [jeslyp.github.io/Jesly/projects/fraud](https://jeslyp.github.io/Jesly/projects/fraud/)
 
 **Live API on AWS:** [https://iilsazxkuj.execute-api.eu-west-2.amazonaws.com/health](https://iilsazxkuj.execute-api.eu-west-2.amazonaws.com/health) (deployed with Terraform from GitHub Actions; rate-limited)
@@ -62,7 +64,7 @@ fraudservice/
   drift.py      compares new data with training data (PSI per feature and on scores), checks recall if labels exist
   lambda_handler.py   runs the API on AWS Lambda behind API Gateway
   queue_handler.py    event-driven consumer: scores transactions from SQS, publishes fraud alerts to SNS
-tests/          17 pytest tests covering the API, Lambda and queue handlers, drift checks and training
+tests/          40 pytest tests covering the API, Lambda and queue handlers, drift checks, training, the agent and the Skill
 ```
 
 **Train** (needs `creditcard.csv` from Kaggle in this folder):
